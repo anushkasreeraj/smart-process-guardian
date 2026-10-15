@@ -1,0 +1,244 @@
+
+"""
+Smart Process Guardian
+Appendix A: Prototype Collector and Detector
+Tabular Output Version
+"""
+
+import time
+import random
+import csv
+import json
+import statistics
+from collections import deque
+
+
+# 1. Generate simulated process measurements
+class SyntheticProcessReader:
+    def __init__(self, pid, workload):
+        self.pid = pid
+        self.workload = workload
+
+    def read(self):
+        if self.workload == "CPU-bound":
+            cpu = random.uniform(80, 95)
+            mem = random.uniform(20, 40)
+            io = random.uniform(0, 5)
+
+        elif self.workload == "Memory pressure":
+            cpu = random.uniform(5, 20)
+            mem = random.uniform(86, 95)
+            io = random.uniform(0, 5)
+
+        elif self.workload == "I/O-heavy":
+            cpu = random.uniform(10, 30)
+            mem = random.uniform(20, 40)
+            io = random.uniform(65, 80)
+
+        else:
+            cpu = random.uniform(2, 10)
+            mem = random.uniform(10, 25)
+            io = random.uniform(0, 3)
+
+        return {
+            "pid": self.pid,
+            "workload": self.workload,
+            "cpu": round(cpu, 2),
+            "mem": round(mem, 2),
+            "io_wait": round(io, 2),
+            "timestamp": round(time.time(), 3)
+        }
+
+
+# 2. Maintain rolling history
+class RollingHistory:
+    def __init__(self, maxlen=500):
+        self.values = deque(maxlen=maxlen)
+
+    def add(self, value):
+        self.values.append(value)
+
+    def mean(self):
+        return statistics.mean(self.values) if self.values else 0
+
+    def stdev(self):
+        return statistics.pstdev(self.values) if len(self.values) > 1 else 0
+
+
+# 3. Detect threshold and statistical anomalies
+class GuardianAgent:
+    def __init__(self, readers):
+        self.readers = readers
+        self.history = {
+            r.pid: {
+                metric: RollingHistory()
+                for metric in ("cpu", "mem", "io_wait")
+            }
+            for r in readers
+        }
+
+    def detect(self, sample):
+        limits = {"cpu": 80, "mem": 85, "io_wait": 60}
+        values = {
+            "cpu": sample["cpu"],
+            "mem": sample["mem"],
+            "io_wait": sample["io_wait"]
+        }
+
+        reasons = []
+
+        for metric, value in values.items():
+            history = self.history[sample["pid"]][metric]
+
+            # Fixed threshold detection
+            if value > limits[metric]:
+                reasons.append(metric + " threshold exceeded")
+
+            # Z-score detection using previous samples
+            elif len(history.values) >= 10:
+                mean = history.mean()
+                std = history.stdev()
+
+                if std > 0 and abs(value - mean) / std > 3:
+                    reasons.append(metric + " statistical anomaly")
+
+        # Update history only after detection
+        for metric, value in values.items():
+            self.history[sample["pid"]][metric].add(value)
+
+        return reasons
+
+
+# 4. Print aligned tables
+def print_table(headers, rows):
+    if not rows:
+        print("No records found.")
+        return
+
+    widths = [
+        max(len(str(headers[i])),
+            max(len(str(row[i])) for row in rows))
+        for i in range(len(headers))
+    ]
+
+    line = "+-" + "-+-".join("-" * w for w in widths) + "-+"
+
+    print(line)
+    print("| " + " | ".join(
+        str(headers[i]).ljust(widths[i])
+        for i in range(len(headers))
+    ) + " |")
+    print(line)
+
+    for row in rows:
+        print("| " + " | ".join(
+            str(row[i]).ljust(widths[i])
+            for i in range(len(headers))
+        ) + " |")
+
+    print(line)
+
+
+# 5. Run the monitoring prototype
+if __name__ == "__main__":
+    random.seed(42)
+
+    readers = [
+        SyntheticProcessReader(101, "Normal"),
+        SyntheticProcessReader(102, "CPU-bound"),
+        SyntheticProcessReader(103, "Memory pressure"),
+        SyntheticProcessReader(104, "I/O-heavy")
+    ]
+
+    agent = GuardianAgent(readers)
+    all_samples = []
+    all_alerts = []
+
+    print("\nSMART PROCESS GUARDIAN")
+    print("Prototype Process Monitoring and Anomaly Detection")
+    print("=" * 85)
+
+    for cycle in range(1, 4):
+        samples = [reader.read() for reader in readers]
+        print(f"\nCYCLE {cycle} - PROCESS METRICS")
+
+        sample_rows = []
+        for sample in samples:
+            reasons = agent.detect(sample)
+            status = "ALERT" if reasons else "NORMAL"
+            reason_text = ", ".join(reasons) if reasons else "-"
+
+            row = {
+                "cycle": cycle,
+                **sample,
+                "status": status,
+                "reason": reason_text
+            }
+
+            all_samples.append(row)
+
+            if reasons:
+                all_alerts.append(row.copy())
+
+            sample_rows.append([
+                sample["pid"],
+                sample["workload"],
+                f'{sample["cpu"]:.2f}%',
+                f'{sample["mem"]:.2f}%',
+                f'{sample["io_wait"]:.2f}',
+                status,
+                reason_text
+            ])
+
+        print_table(
+            ["PID", "Workload", "CPU", "Memory",
+             "I/O Wait", "Status", "Alert Reason"],
+            sample_rows
+        )
+
+        if cycle < 3:
+            time.sleep(0.2)
+
+    # Summary of all alerts
+    print("\nALERT SUMMARY")
+    alert_rows = [
+        [
+            row["cycle"],
+            row["pid"],
+            row["workload"],
+            row["cpu"],
+            row["mem"],
+            row["io_wait"],
+            row["reason"]
+        ]
+        for row in all_alerts
+    ]
+
+    print_table(
+        ["Cycle", "PID", "Workload", "CPU", "Memory",
+         "I/O Wait", "Reason"],
+        alert_rows
+    )
+
+    # Save complete data to CSV
+    columns = [
+        "cycle", "pid", "workload", "cpu", "mem",
+        "io_wait", "timestamp", "status", "reason"
+    ]
+
+    with open("guardian_results.csv", "w", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=columns)
+        writer.writeheader()
+        writer.writerows(all_samples)
+
+    # Save complete data to JSON
+    with open("guardian_results.json", "w") as file:
+        json.dump(
+            {"samples": all_samples, "alerts": all_alerts},
+            file,
+            indent=2
+        )
+
+    print("\nMonitoring completed successfully.")
+    print("Files saved: guardian_results.csv")
+    print("             guardian_results.json")
